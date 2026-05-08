@@ -11,8 +11,8 @@ import org.example.webquanao.service.PasswordResetService;
 
 import java.io.IOException;
 
-@WebServlet(name = "ResetPasswordController", value = {"/reset-password", "/resetPassword"})
-public class ResetPasswordController extends HttpServlet {
+@WebServlet(name = "VerifyResetCodeController", value = "/verifyCode")
+public class VerifyResetCodeController extends HttpServlet {
     private PasswordResetService passwordResetService;
 
     @Override
@@ -23,16 +23,16 @@ public class ResetPasswordController extends HttpServlet {
     @Override
     protected void doGet(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
         HttpSession session = request.getSession(false);
-        String email = session == null ? null : (String) session.getAttribute("resetPasswordEmail");
+        String email = session == null ? null : (String) session.getAttribute("pendingResetEmail");
 
         if (email == null || email.isBlank()) {
-            request.setAttribute("error", "Vui lòng xác nhận mã OTP trước khi đặt mật khẩu mới");
-            request.getRequestDispatcher("/WEB-INF/verifyCode.jsp").forward(request, response);
+            request.setAttribute("error", "Vui lòng nhập email để nhận mã xác nhận");
+            request.getRequestDispatcher("/WEB-INF/forgotPassword.jsp").forward(request, response);
             return;
         }
 
         request.setAttribute("email", email);
-        request.getRequestDispatcher("/WEB-INF/resetPassword.jsp").forward(request, response);
+        request.getRequestDispatcher("/WEB-INF/verifyCode.jsp").forward(request, response);
     }
 
     @Override
@@ -41,22 +41,18 @@ public class ResetPasswordController extends HttpServlet {
         response.setContentType("text/html;charset=UTF-8");
 
         HttpSession session = request.getSession(false);
-        String email = session == null ? null : (String) session.getAttribute("resetPasswordEmail");
-        String password = request.getParameter("password");
-        String confirmPassword = request.getParameter("confirmPassword");
+        String email = session == null ? null : (String) session.getAttribute("pendingResetEmail");
+        String otp = request.getParameter("otp");
 
-        Result result = passwordResetService.resetPassword(email, password, confirmPassword);
+        Result result = passwordResetService.verifyOtp(email, otp);
         if (result.isSuccess()) {
-            if (session != null) {
-                session.removeAttribute("pendingResetEmail");
-                session.removeAttribute("resetPasswordEmail");
-            }
-            request.setAttribute("message", result.getMessage());
-            request.getRequestDispatcher("/WEB-INF/login.jsp").forward(request, response);
+            request.getSession().setAttribute("resetPasswordEmail", result.getData().get("email"));
+            request.setAttribute("email", result.getData().get("email"));
+            request.getRequestDispatcher("/WEB-INF/resetPassword.jsp").forward(request, response);
         } else {
             request.setAttribute("error", result.getMessage());
             request.setAttribute("email", email);
-            request.getRequestDispatcher("/WEB-INF/resetPassword.jsp").forward(request, response);
+            request.getRequestDispatcher("/WEB-INF/verifyCode.jsp").forward(request, response);
         }
     }
 }

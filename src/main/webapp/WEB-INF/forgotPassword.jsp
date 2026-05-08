@@ -1,10 +1,10 @@
 <%@ page contentType="text/html;charset=UTF-8" language="java" %>
 <html>
 <head>
-    <title>Quên mật khẩu</title>
+    <title>Khôi phục mật khẩu</title>
 </head>
 <body>
-<h2>Quên mật khẩu</h2>
+<h2>Khôi phục mật khẩu</h2>
 
 <% if (request.getAttribute("message") != null) { %>
     <p style="color: green;"><%= request.getAttribute("message") %></p>
@@ -16,10 +16,11 @@
 
 <form action="<%= request.getContextPath() %>/forgot-password" method="post">
     <p>Email</p>
-    <input type="email" name="email" placeholder="Nhập email" value="<%= request.getAttribute("email") == null ? "" : request.getAttribute("email") %>" required />
+    <input type="email" name="email" placeholder="Nhập email đã đăng ký"
+           value="<%= request.getAttribute("email") == null ? "" : request.getAttribute("email") %>" required />
 
     <br><br>
-    <button type="submit">Gửi yêu cầu</button>
+    <button type="submit">Gửi mã</button>
 </form>
 
 <br>

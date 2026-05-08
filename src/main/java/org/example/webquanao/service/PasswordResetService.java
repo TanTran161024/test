@@ -11,18 +11,21 @@ import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
 import java.sql.Timestamp;
-import java.util.Base64;
+import java.util.Map;
+import java.util.regex.Pattern;
 
 public class PasswordResetService {
     private static final int TOKEN_EXPIRE_MINUTES = 15;
     private static final int REQUEST_LIMIT_PER_HOUR = 3;
     private static final SecureRandom SECURE_RANDOM = new SecureRandom();
+    private static final Pattern OTP_PATTERN = Pattern.compile("\\d{6}");
+    private static final Pattern SPECIAL_CHARACTER_PATTERN = Pattern.compile("[^a-zA-Z0-9]");
 
     private final UserDAO userDAO = new UserDAO();
     private final PasswordResetTokenDAO tokenDAO = new PasswordResetTokenDAO();
     private final EmailService emailService = new EmailService();
 
-    public Result requestReset(String email, String baseUrl, String requestIp, String userAgent) {
+    public Result requestReset(String email, String requestIp, String userAgent) {
         email = trim(email);
 
         if (isBlank(email) || !email.contains("@")) {
@@ -52,52 +55,56 @@ public class PasswordResetService {
             return Result.fail("Bạn đã gửi yêu cầu quá nhiều lần. Vui lòng thử lại sau");
         }
 
-        String rawToken = generateToken();
-        String tokenHash = hashToken(rawToken);
+        String otp = generateOtp();
+        String tokenHash = hashToken(otp);
         Timestamp expiresAt = new Timestamp(System.currentTimeMillis() + TOKEN_EXPIRE_MINUTES * 60L * 1000L);
 
         try {
             tokenDAO.markAllUnusedByUserAsUsed(user.getId());
             tokenDAO.insert(user.getId(), tokenHash, expiresAt, requestIp, limitLength(userAgent, 255));
 
-            String link = baseUrl + "/reset-password?token=" + rawToken;
             String content = "<h3>Xin chào " + escapeHtml(user.getFullName()) + "</h3>"
                     + "<p>Bạn vừa yêu cầu khôi phục mật khẩu.</p>"
-                    + "<p>Link đặt lại mật khẩu có hiệu lực trong " + TOKEN_EXPIRE_MINUTES + " phút.</p>"
-                    + "<p><a href='" + link + "'>Đặt lại mật khẩu</a></p>"
+                    + "<p>Mã xác nhận của bạn là:</p>"
+                    + "<h2 style='letter-spacing: 4px;'>" + otp + "</h2>"
+                    + "<p>Mã OTP có hiệu lực trong " + TOKEN_EXPIRE_MINUTES + " phút.</p>"
                     + "<p>Nếu bạn không yêu cầu thao tác này, vui lòng bỏ qua email.</p>";
 
             emailService.sendEmail(user.getEmail(), "Khôi phục mật khẩu", content);
         } catch (Exception e) {
             e.printStackTrace();
             tokenDAO.markAllUnusedByUserAsUsed(user.getId());
-            return Result.fail("Hệ thống gửi email thất bại. Vui lòng thử lại sau");
+            return Result.fail("Gửi email thất bại. Vui lòng thử lại sau ít phút");
         }
 
-        return Result.ok("Vui lòng kiểm tra email để đặt lại mật khẩu", null);
+        return Result.ok("Mã xác nhận đã được gửi đến email của bạn", Map.of("email", user.getEmail()));
     }
 
-    public Result validateToken(String rawToken) {
-        if (isBlank(rawToken)) {
-            return Result.fail("Đường dẫn không hợp lệ hoặc đã hết hạn");
+    public Result verifyOtp(String email, String otp) {
+        email = trim(email);
+        otp = trim(otp);
+
+        if (isBlank(email) || !OTP_PATTERN.matcher(otp).matches()) {
+            return Result.fail("Mã xác nhận không hợp lệ hoặc đã hết hạn");
         }
 
-        PasswordResetToken token = tokenDAO.findValidByHash(hashToken(rawToken));
-        if (token == null) {
-            return Result.fail("Đường dẫn không hợp lệ hoặc đã hết hạn");
-        }
-
-        User user = userDAO.findById(token.getUserId());
+        User user = userDAO.findByEmail(email);
         if (user == null || !user.isActive()) {
             return Result.fail("Tài khoản không hợp lệ hoặc đang bị khóa");
         }
 
-        return Result.ok("Token hợp lệ", null);
+        PasswordResetToken token = tokenDAO.findValidByUserIdAndHash(user.getId(), hashToken(otp));
+        if (token == null) {
+            return Result.fail("Mã xác nhận không hợp lệ hoặc đã hết hạn");
+        }
+
+        return Result.ok("Mã xác nhận hợp lệ", Map.of("email", user.getEmail()));
     }
 
-    public Result resetPassword(String rawToken, String password, String confirmPassword) {
-        if (isBlank(rawToken)) {
-            return Result.fail("Đường dẫn không hợp lệ hoặc đã hết hạn");
+    public Result resetPassword(String email, String password, String confirmPassword) {
+        email = trim(email);
+        if (isBlank(email)) {
+            return Result.fail("Phiên khôi phục mật khẩu không hợp lệ hoặc đã hết hạn");
         }
 
         if (isBlank(password) || isBlank(confirmPassword)) {
@@ -108,24 +115,18 @@ public class PasswordResetService {
             return Result.fail("Mật khẩu mới không khớp");
         }
 
-        if (password.length() < 6) {
-            return Result.fail("Mật khẩu chưa đủ mạnh. Vui lòng nhập ít nhất 6 ký tự");
+        if (!isStrongPassword(password)) {
+            return Result.fail("Mật khẩu chưa đủ mạnh. Vui lòng nhập ít nhất 6 ký tự và có ký tự đặc biệt");
         }
 
-        PasswordResetToken token = tokenDAO.findValidByHash(hashToken(rawToken));
-        if (token == null) {
-            return Result.fail("Đường dẫn không hợp lệ hoặc đã hết hạn");
-        }
-
-        User user = userDAO.findById(token.getUserId());
+        User user = userDAO.findByEmail(email);
         if (user == null || !user.isActive()) {
             return Result.fail("Tài khoản không hợp lệ hoặc đang bị khóa");
         }
 
         try {
             userDAO.updatePassword(user.getId(), PasswordUtil.hashPassword(password));
-            tokenDAO.markUsed(token.getId());
-            tokenDAO.markAllUnusedByUserAsUsed(user.getId());
+            tokenDAO.deleteByUserId(user.getId());
         } catch (Exception e) {
             e.printStackTrace();
             return Result.fail("Cập nhật mật khẩu thất bại. Vui lòng thử lại");
@@ -134,10 +135,8 @@ public class PasswordResetService {
         return Result.ok("Đặt lại mật khẩu thành công. Vui lòng đăng nhập bằng mật khẩu mới", null);
     }
 
-    private String generateToken() {
-        byte[] bytes = new byte[32];
-        SECURE_RANDOM.nextBytes(bytes);
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
+    private String generateOtp() {
+        return String.valueOf(100000 + SECURE_RANDOM.nextInt(900000));
     }
 
     private String hashToken(String rawToken) {
@@ -160,6 +159,10 @@ public class PasswordResetService {
 
     private boolean isBlank(String value) {
         return value == null || value.trim().isEmpty();
+    }
+
+    private boolean isStrongPassword(String password) {
+        return password.length() >= 6 && SPECIAL_CHARACTER_PATTERN.matcher(password).find();
     }
 
     private String limitLength(String value, int maxLength) {

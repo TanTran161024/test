@@ -10,7 +10,7 @@ import org.example.webquanao.service.PasswordResetService;
 
 import java.io.IOException;
 
-@WebServlet(name = "ForgotPasswordController", value = "/forgot-password")
+@WebServlet(name = "ForgotPasswordController", value = {"/forgot-password", "/forgotPassword"})
 public class ForgotPasswordController extends HttpServlet {
     private PasswordResetService passwordResetService;
 
@@ -32,24 +32,20 @@ public class ForgotPasswordController extends HttpServlet {
         String email = request.getParameter("email");
         Result result = passwordResetService.requestReset(
                 email,
-                buildBaseUrl(request),
                 getClientIp(request),
                 request.getHeader("User-Agent")
         );
 
         if (result.isSuccess()) {
+            request.getSession().setAttribute("pendingResetEmail", result.getData().get("email"));
             request.setAttribute("message", result.getMessage());
+            request.setAttribute("email", result.getData().get("email"));
+            request.getRequestDispatcher("/WEB-INF/verifyCode.jsp").forward(request, response);
         } else {
             request.setAttribute("error", result.getMessage());
             request.setAttribute("email", email);
+            request.getRequestDispatcher("/WEB-INF/forgotPassword.jsp").forward(request, response);
         }
-
-        request.getRequestDispatcher("/WEB-INF/forgotPassword.jsp").forward(request, response);
-    }
-
-    private String buildBaseUrl(HttpServletRequest request) {
-        String contextPath = request.getContextPath();
-        return request.getScheme() + "://" + request.getServerName() + ":" + request.getServerPort() + contextPath;
     }
 
     private String getClientIp(HttpServletRequest request) {
